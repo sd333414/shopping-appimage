@@ -1,0 +1,25 @@
+{
+    "executionRoleArn": "arn:aws:iam::512736516927:role/ecsTaskExecutionRole",
+    "taskRoleArn": "arn:aws:iam::512736516927:role/ecsroleapp",
+    "containerDefinitions": [
+        {
+            "name": "sample-website",
+            "image": "<IMAGE1_NAME>",
+            "essential": true,
+            "portMappings": [
+                {
+                    "hostPort": 80,
+                    "protocol": "tcp",
+                    "containerPort": 80
+                }
+            ]
+        }
+    ],
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "networkMode": "awsvpc",
+    "cpu": "1024",
+    "memory": "2048",
+    "family": "starkapp"
+}

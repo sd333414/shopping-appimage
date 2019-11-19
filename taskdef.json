@@ -16,7 +16,7 @@
             "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
-                    "awslogs-group": "awslogs-wordpress",
+                    "awslogs-group": "ecslogsalpha",
                     "awslogs-region": "us-west-2",
                     "awslogs-stream-prefix": "awslogs-example"
                 }

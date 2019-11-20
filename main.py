@@ -5,7 +5,21 @@ from flaskext.mysql import MySQL
 from werkzeug.utils import secure_filename
 import traceback
 
-ssm = boto3.client('ssm', region_name='us-west-2')
+sts_client = boto3.client('sts')
+assumed_role_object=sts_client.assume_role(
+    RoleArn="arn:aws:iam::512736516927:role/CrossAccountSSMRole",
+    RoleSessionName="AssumeRoleSession1"
+)
+
+
+ssm = boto3.client(
+    'ssm',
+    aws_access_key_id=credentials['AccessKeyId'],
+    aws_secret_access_key=credentials['SecretAccessKey'],
+    aws_session_token=credentials['SessionToken'],
+    region_name='us-west-2'
+)
+
 db_host= ssm.get_parameter(Name='DB_Host')
 db_uname= ssm.get_parameter(Name='DB_User', WithDecryption=True)
 db_pwd= ssm.get_parameter(Name='DB_Password', WithDecryption=True)

@@ -11,6 +11,8 @@ assumed_role_object=sts_client.assume_role(
     RoleSessionName="AssumeRoleSession1"
 )
 
+credentials=assumed_role_object['Credentials']
+
 
 ssm = boto3.client(
     'ssm',

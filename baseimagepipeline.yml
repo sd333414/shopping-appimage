@@ -1,0 +1,226 @@
+# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# https://aws.amazon.com/agreement
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+Description: Repository, Code Build Project and 2 Stage Code Pipeline with Source and Build stages. GitHub token is pulled from AWS Secrets Manager.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "GitHub Repository Configuration"
+        Parameters:
+          - pGitHubUser
+          - pGitHubTokenSecretId
+          - pGitHubTokenSecretKey
+          - pGitHubBranch
+          - pBaseImageGitHubRepo
+      -
+        Label:
+          default: "ECR Repository for the Base Image"
+        Parameters:
+          - pBaseImageECRRepo
+    ParameterLabels:
+      pBaseImageGitHubRepo:
+        default: "GitHub repository name"
+      pGitHubUser:
+        default: "Username of your GitHub account"
+      pGitHubTokenSecretId:
+        default: "AWS Secrets Manager Secret-Id of your GitHub account token"
+      pGitHubTokenSecretKey:
+        default: "AWS Secrets Manager Secret-Id 'Key' of your GitHub account token"
+      pGitHubBranch:
+        default: "Branch name of the base image GitHub repository"
+      pBaseImageECRRepo:
+        default: "Base Image ECR repository name"
+
+Parameters:
+  pBaseImageECRRepo:
+    Type: String
+    Description: This will create an ECR repository for the base image where all the dependencies for the app are build into a Docker Image.  
+  pBaseImageGitHubRepo:
+    Type: String
+    Default: shoppingapp-baseimage
+    Description: Enter the GitHub repository name where the Dockerfile and BuildSpec files for the base image are stored. 
+  pGitHubBranch:
+    Type: String
+    Default: master
+    Description: Enter the brach for the base image GitHub repository.
+  pGitHubUser:
+    Type: String
+    Default: sd333414
+    Description: Enter the usename of your GitHub account.
+  pGitHubTokenSecretId:
+    Type: String
+    Default: GitHubAccessKey
+    Description: Enter the secret-id of the GitHub Token. 
+  pGitHubTokenSecretKey:
+    Type: String
+    Default: GitHubKey
+    Description: Enter the secret-id "Key" of the GitHub Token.
+
+Resources: 
+  rArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "Artifact S3 for ${AWS::StackName}"  
+  rBaseImageECRRepository:
+      Type: AWS::ECR::Repository
+      Properties:
+        RepositoryName: !Ref pBaseImageECRRepo
+        Tags:
+          - Key: Name
+            Value: !Sub "BaseImageECR repository for ${AWS::StackName}"
+  rCodeBuildProject:
+      Type: AWS::CodeBuild::Project
+      Properties:
+        Artifacts:
+            Type: CODEPIPELINE
+        Environment:
+            ComputeType: BUILD_GENERAL1_SMALL
+            Image: aws/codebuild/docker:17.09.0
+            Type: LINUX_CONTAINER
+            PrivilegedMode: 'true'
+            EnvironmentVariables:
+            - Name: AWS_DEFAULT_REGION
+              Value: !Ref AWS::Region
+            - Name: REPOSITORY_URI
+              Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${rBaseImageECRRepository}
+        Name: !Ref AWS::StackName
+        Source:
+          Type: CODEPIPELINE
+        ServiceRole: !Ref rCodeBuildServiceRole
+        Tags:
+          - Key: Name
+            Value: !Ref AWS::StackName
+  rBaseImagePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Type: S3
+        Location: !Ref rArtifactBucket
+      RoleArn: !GetAtt rCodePipelineServiceRole.Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceCode
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Version: 1
+                Provider: GitHub
+              Configuration:
+                Owner: !Ref pGitHubUser
+                Repo: !Ref pBaseImageGitHubRepo
+                Branch: !Ref pGitHubBranch
+                OAuthToken: !Sub '{{resolve:secretsmanager:${pGitHubTokenSecretId}:SecretString:${pGitHubTokenSecretKey}}}'
+              OutputArtifacts:
+                - Name: SourceArtifact
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref rCodeBuildProject
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildOutput
+              RunOrder: 1
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+
+  rCodePipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: !Sub "CodePipelinePolicy${AWS::StackName}"
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Resource:
+                  - !Sub arn:aws:s3:::${rArtifactBucket}/*
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketVersioning
+              - Resource: "*"
+                Effect: Allow
+                Action: "*"
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-CodePipelineServiceRole
+  rCodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: !Sub "CodeBuildPolicy${AWS::StackName}" 
+          PolicyDocument:
+              Version: 2012-10-17
+              Statement:
+              - Resource: "*"
+                Effect: Allow
+                Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+                - ecr:GetAuthorizationToken
+              - Resource: !Sub arn:aws:s3:::${rArtifactBucket}/*
+                Effect: Allow
+                Action:
+                - s3:GetObject
+                - s3:PutObject
+                - s3:GetObjectVersion
+              - Resource: !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${rBaseImageECRRepository}
+                Effect: Allow
+                Action:
+                - ecr:GetDownloadUrlForLayer
+                - ecr:BatchGetImage
+                - ecr:BatchCheckLayerAvailability
+                - ecr:PutImage
+                - ecr:InitiateLayerUpload
+                - ecr:UploadLayerPart
+                - ecr:CompleteLayerUpload
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-CodeBuildServiceRole
+
+Outputs:
+  oBaseImageECRRepoURI:
+    Description: The ECR Repository URI used to push the base image with all the dependencies.
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${rBaseImageECRRepository}"
+    Export: 
+      Name: !Sub "BaseImageRepoURI-${AWS::StackName}"
+  oBaseImageECRRepoName:
+    Description: The ECR Repository Name used to push the base image with all the dependencies.
+    Value: !Ref rBaseImageECRRepository
+    Export:
+      Name: !Sub "BaseImageRepoName-${AWS::StackName}"
